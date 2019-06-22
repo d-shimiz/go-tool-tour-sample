@@ -1,7 +1,10 @@
+// ref: https://qiita.com/hirano00o/items/bb92faf229c851f613d3
 package main
 
 import (
 	"fmt"
+	"time"
+	"sync"
 )
 
 type Fetcher interface {
@@ -12,21 +15,51 @@ type Fetcher interface {
 
 // Crawl uses fetcher to recursively crawl
 // pages starting with url, to a maximum of depth.
+// ref: https://qiita.com/hirano00o/items/bb92faf229c851f613d3
 func Crawl(url string, depth int, fetcher Fetcher) {
 	// TODO: Fetch URLs in parallel.
 	// TODO: Don't fetch the same URL twice.
 	// This implementation doesn't do either:
-	if depth <= 0 {
-		return
+
+	ch := make(chan string, depth*depth)
+	var prev int
+
+	cache := make(map[string]bool)
+	var mutex sync.Mutex
+
+	var crawlChild func(string, int)
+	crawlChild = func(url string, depth int) {
+		if depth <= 0 {
+			return
+		}
+
+		if cache[url] == true {
+			return
+		}
+		mutex.Lock()
+		defer mutex.Unlock()
+		cache[url] = true
+
+		ch <- url
+		body, urls, err := fetcher.Fetch(url)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Printf("found: %s %q\n", url, body)
+		for _, u := range urls {
+			go crawlChild(u, depth-1)
+		}
 	}
-	body, urls, err := fetcher.Fetch(url)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Printf("found: %s %q\n", url, body)
-	for _, u := range urls {
-		Crawl(u, depth-1, fetcher)
+	crawlChild(url, depth)
+
+	for {
+		if len(ch) != prev {
+			prev = len(ch)
+		} else {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 	return
 }
